@@ -177,3 +177,9 @@ preserved/deleted.
 
 More information on solving common replication conflicts can be found
 [here](https://access.redhat.com/documentation/en-us/red_hat_directory_server/10/html/administration_guide/managing_replication-solving_common_replication_conflicts).
+
+
+### State changes (against original cipaconsitency project)
+
+- JSON format support
+- OpenMetrics format support

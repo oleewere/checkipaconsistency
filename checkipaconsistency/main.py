@@ -24,6 +24,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 from __future__ import absolute_import, print_function
 import os
 import sys
+import json
 import argparse
 from prettytable import PrettyTable
 import dns.resolver
@@ -151,6 +152,7 @@ class Main(object):
         parser.add_argument('--quiet', action='store_true', dest='quiet', help='do not log to console')
         parser.add_argument('-l', '--log-file', nargs='?', dest='log_file', default='not_set',
                             help='log to file (./%s.log by default)' % self._app_name)
+        parser.add_argument('-o', '--output', dest='output_mode', help='Set output mode. (table | json | metrics, default: table)', default='table')
         parser.add_argument('--no-header', action='store_true', dest='disable_header', help='disable table header')
         parser.add_argument('--no-border', action='store_true', dest='disable_border', help='disable table border')
         parser.add_argument('-n', nargs='?', dest='nagios_check', help='Nagios plugin mode', default='not_set',
@@ -243,10 +245,59 @@ class Main(object):
         if self._args.nagios_check:
             self._log.debug('Nagios plugin mode')
             self._nagios_plugin(self._args.nagios_check)
+        elif self._args.output_mode == "json":
+            self._log.debug('JSON output mode')
+            self._print_json()
+        elif self._args.output_mode == "metrics":
+            self._log.debug('OpenMetrics output mode')
+            self._print_metrics()
         else:
-            self._log.debug('CLI mode')
+            self._log.debug('Table output mode')
             self._print_table()
         self._log.debug('Finishing...')
+    
+    def _print_metrics(self):
+        object = self._to_object(True)
+        metrics_output = ""
+        for key in object:
+            vals = object[key]
+            state=vals["state"]
+            state_val = 0 if state == "OK" else 1
+            metrics_state_record = "cipa_%s_state{cipa_info=\"%s\"} %d\n" % (key, state, state_val)
+            server_values=vals["values"]
+            for server_key in server_values:
+                metric_val = server_values[server_key]
+                if metric_val.isdigit():
+                    metrics_output+="cipa_%s{cipa_server=\"%s\"} %s\n" % (key, server_key, metric_val)
+                elif metric_val == "True":
+                    metrics_output+="cipa_%s{cipa_server=\"%s\"} 0\n" % (key, server_key)
+                elif metric_val == "False":
+                    metrics_output+="cipa_%s{cipa_server=\"%s\"} 1\n" % (key, server_key)
+                else:
+                    metrics_output+="cipa_%s{cipa_server=\"%s\", cipa_server=\"%s\"} 0\n" % (key, server_key, metric_val)
+            metrics_output+=metrics_state_record
+        self._log.info(metrics_output.rstrip())
+
+    def _print_json(self):
+        json_output = self._to_object()
+        json_output = json.dumps(json_output)
+        self._log.info(json_output)
+
+    def _to_object(self, formatted_names=False):
+        json_output = {}
+        for check in self._checks:
+            json_output = OrderedDict(json_output)
+            name=self._checks[check]
+            if formatted_names:
+                name=name.replace(" ", "_").lower()
+            state = 'OK'if self._is_consistent(check, [getattr(server, check) for server in self._servers.values()]) else 'FAIL'
+            json_output[name]={}
+            json_output[name]['state']=state
+            json_output[name]['values']={}
+            for server in self._servers.values():
+                hostname_short = getattr(server, 'hostname_short')
+                json_output[name]['values'][hostname_short] = str(getattr(server, check)).replace("\n", ",")
+        return json_output
 
     def _print_table(self):
         table = PrettyTable(
